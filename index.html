@@ -67,6 +67,10 @@ h1{font-size:17px;margin:0;font-weight:650}
 .filtros{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
 .filtros button{border:1px solid var(--line);background:var(--card);border-radius:99px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--muted)}
 .filtros button.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+.aviso{border:1px solid var(--warn)}
+.aviso h3{color:var(--warn)}
+.avisobtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.avisobtns button{flex:1 1 auto;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-weight:600;font-size:14px}
 .empty{text-align:center;color:var(--muted);padding:36px 16px}
 .ghost{display:block;width:100%;margin-top:12px;padding:11px;border:1px dashed var(--line);border-radius:12px;background:transparent;color:var(--brand);font-weight:600}
 .sec{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:14px;margin-top:12px}
@@ -314,6 +318,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-o
 
     <h3>Backup</h3>
     <p class="hint">Baixe um arquivo com todos os dados, ou restaure a partir de um.</p>
+    <p class="hint" id="bInfo"></p>
     <div class="row"><button type="button" id="bExp">Exportar</button><label class="btn" for="bImp">Importar</label></div>
     <input type="file" id="bImp" accept=".json,application/json" hidden>
   </div>
@@ -462,6 +467,27 @@ function render() {
   $('#view').innerHTML = tab === 'dash' ? viewDash() : tab === 'lanc' ? viewLanc() : viewCad();
 }
 
+const diasDesde = t => t ? Math.floor((Date.now() - t) / 864e5) : null;
+const dataHora = t => new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+// Lembrete quando os dados só existem neste aparelho (sem sincronização e sem backup recente)
+function avisoBackup() {
+  if (!db.items.length) return '';
+  if (cfg.token) {
+    const d = diasDesde(cfg.lastSync);
+    if (d === null || d < 7) return '';
+    return `<div class="sec aviso"><h3>⚠︎ A sincronização parou</h3><p class="hint" style="margin-top:0">A última sincronização foi há ${d} dias. Abra ⚙︎ e toque em <b>Salvar e sincronizar</b>.</p>
+      <div class="avisobtns"><button data-act="abrirCfg" class="primary">Abrir configurações</button><button data-act="backup">Baixar backup</button></div></div>`;
+  }
+  if (cfg.adiar && Date.now() < cfg.adiar) return '';
+  const d = diasDesde(cfg.lastBackup);
+  if (d !== null && d < 7) return '';
+  const msg = d === null ? 'Você ainda não fez nenhum backup.' : `Seu último backup foi há ${d} dias.`;
+  return `<div class="sec aviso"><h3>⚠︎ Seus dados estão só neste aparelho</h3>
+    <p class="hint" style="margin-top:0">${msg} Se o navegador for limpo ou o celular restaurado, você perde tudo.</p>
+    <div class="avisobtns"><button data-act="abrirCfg" class="primary">Ativar sincronização</button><button data-act="backup">Baixar backup</button><button data-act="adiar">Depois</button></div></div>`;
+}
+
 function faturasDoMes(mk = cur) {
   const items = monthItems(mk);
   return db.cartoes.map(c => {
@@ -480,7 +506,7 @@ function barras(obj, total, cor) {
 
 function viewDash() {
   const items = monthItems(cur);
-  let h = '';
+  let h = avisoBackup();
   if (!db.items.length) h += `<div class="sec"><h3>Bem-vinda(o)!</h3>
     <p class="hint" style="margin-top:0">Comece cadastrando cartões e pessoas na aba <b>Cadastros</b> e depois toque em <b>＋ Lançar</b>.</p>
     <p class="hint">Recebeu um arquivo com lançamentos de outra pessoa?</p>
@@ -611,7 +637,7 @@ function itemHTML(i) {
 }
 
 function viewLanc() {
-  let h = '';
+  let h = avisoBackup();
   const fx = fixosParaCopiar();
   if (fx.length) h += `<button class="ghost" data-act="copiar">↻ Copiar ${fx.length} lançamento(s) fixo(s) de ${monthName(addMonth(cur, -1), { month: 'long' })}</button>`;
   const todos = monthItems(cur);
@@ -915,6 +941,9 @@ const acoes = {
   editar: b => openForm(b.dataset.id),
   copiar: copiarFixos,
   importar: () => $('#bImp').click(),
+  abrirCfg: () => $('#openCfg').click(),
+  backup: () => { baixar(); toast('Backup baixado. Guarde o arquivo no Drive ou mande para você no WhatsApp.'); },
+  adiar: () => { cfg.adiar = Date.now() + 3 * 864e5; saveCfg(); render(); },
   mes: b => { cur = b.dataset.id; tab = 'lanc'; render(); window.scrollTo(0, 0); },
   pessoa: b => abrirPessoa(b.dataset.id),
   excluir: b => excluirItem(db.items.find(x => x.id === b.dataset.id)),
@@ -1010,6 +1039,9 @@ $('#openCfg').onclick = () => {
   $('#cNomeCtl').value = db.nome || (PERFIL ? nomePerfil(PERFIL) : '');
   $('#shLink').value = linkPerfil(PERFIL);
   renderPerfis();
+  $('#bInfo').textContent = `Último backup: ${cfg.lastBackup ? dataHora(cfg.lastBackup) : 'nunca'}`
+    + (cfg.lastSync ? ` · Última sincronização: ${dataHora(cfg.lastSync)}` : '')
+    + (armazenamentoPersistente ? ' · Dados protegidos contra limpeza automática ✓' : '');
   $('#cToken').value = cfg.token || '';
   $('#cGist').value = cfg.gist || '';
   $('#cStatus').textContent = cfg.gist ? `Conectado. Use este ID do Gist nos outros aparelhos: ${cfg.gist}` : '';
@@ -1021,6 +1053,7 @@ function baixar() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(db, null, 1)], { type: 'application/json' }));
   a.download = nomeArquivo();
+  cfg.lastBackup = Date.now(); saveCfg(); render();
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
@@ -1065,7 +1098,10 @@ $('#bImp').onchange = e => {
 
 /* ---------- Sincronização (GitHub Gist) ---------- */
 let pushT;
-const setSync = s => { $('#sync').textContent = cfg.token ? s : ''; };
+const setSync = s => {
+  $('#sync').textContent = cfg.token ? s : '';
+  if (cfg.token && s.startsWith('✓')) { cfg.lastSync = Date.now(); saveCfg(); }
+};
 const temDados = d => d.items.length || d.pessoas.length || d.cartoes.length;
 const semData = d => JSON.stringify({ ...d, updatedAt: 0 });
 
@@ -1151,6 +1187,11 @@ $('#cOff').onclick = () => {
 };
 
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pull().catch(syncErr); });
+
+// Pede ao navegador para não apagar os dados sozinho (ex.: quando falta espaço)
+let armazenamentoPersistente = false;
+if (navigator.storage && navigator.storage.persist)
+  navigator.storage.persisted().then(p => p || navigator.storage.persist()).then(p => { armazenamentoPersistente = p; }).catch(() => {});
 
 render();
 pull().catch(syncErr);
