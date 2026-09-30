@@ -140,7 +140,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-o
 <div class="wrap">
   <header>
     <div class="top">
-      <h1>Controle Financeiro <span id="sync"></span></h1>
+      <h1><span id="titulo">Controle Financeiro</span> <span id="sync"></span></h1>
       <button class="icon-btn" id="openCfg" aria-label="Configurações">⚙︎</button>
     </div>
     <div class="month" id="monthBar">
@@ -297,6 +297,21 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-o
     <div class="row"><button type="button" class="primary" id="cSync">Salvar e sincronizar</button><button type="button" id="cOff">Desconectar</button></div>
     <p id="cStatus" class="hint"></p>
 
+    <h3>Nome deste controle</h3>
+    <div class="addrow" style="margin-top:6px"><input id="cNomeCtl" placeholder="Controle Financeiro" autocomplete="off"><button type="button" id="cNomeSave">Salvar</button></div>
+
+    <h3>Enviar para outra pessoa continuar</h3>
+    <p class="hint">1. Toque em <b>Enviar arquivo</b> e mande o arquivo para a pessoa (WhatsApp, e-mail…) junto com o link abaixo.<br>
+    2. A pessoa abre o link no celular dela, toca em <b>Importar arquivo</b> e escolhe o arquivo. Ela continua de onde você parou.<br>
+    Depois disso, cada uma tem a sua cópia: o que ela lançar não aparece aqui.</p>
+    <div class="addrow"><input id="shLink" readonly><button type="button" id="shCopy">Copiar link</button></div>
+    <div class="row"><button type="button" class="primary" id="shFile">Enviar arquivo</button></div>
+
+    <h3>Controles separados neste aparelho</h3>
+    <p class="hint">Para lançar as contas de outra pessoa sem misturar com as suas.</p>
+    <div id="perfis"></div>
+    <div class="addrow"><input id="nPerfil" placeholder="Nome (ex.: Laureane)" autocomplete="off"><button type="button" id="cPerfil">Criar / abrir</button></div>
+
     <h3>Backup</h3>
     <p class="hint">Baixe um arquivo com todos os dados, ou restaure a partir de um.</p>
     <div class="row"><button type="button" id="bExp">Exportar</button><label class="btn" for="bImp">Importar</label></div>
@@ -310,7 +325,12 @@ const $$ = s => [...document.querySelectorAll(s)];
 const radio = n => (document.querySelector(`[name=${n}]:checked`) || {}).value;
 const setRadio = (n, v) => { const r = document.querySelector(`[name=${n}][value="${v}"]`); if (r) r.checked = true; };
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-const KEY = 'financeiro.v1', CFG = 'financeiro.cfg', FILE = 'financeiro.json';
+// ?p=nome abre um controle separado (dados e sincronização próprios) no mesmo aparelho
+const slug = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+const PERFIL = slug(new URLSearchParams(location.search).get('p'));
+const KEY = 'financeiro.v1' + (PERFIL ? '.' + PERFIL : ''), CFG = 'financeiro.cfg' + (PERFIL ? '.' + PERFIL : ''), FILE = 'financeiro.json';
+const nomePerfil = p => 'Controle ' + p.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+const linkPerfil = p => location.origin + location.pathname + (p ? '?p=' + p : '');
 const FORMAS = { debito: 'Débito', pix: 'Pix', dinheiro: 'Dinheiro', credito: 'Crédito' };
 const DEF = {
   receita: ['Salário', 'PLR', '13º salário', 'Férias', 'Renda extra', 'Rendimentos', 'Outros'],
@@ -337,6 +357,7 @@ function norm(d) {
     pessoas: Array.isArray(d.pessoas) ? d.pessoas : [],
     cartoes: Array.isArray(d.cartoes) ? d.cartoes : [],
     acertos: Array.isArray(d.acertos) ? d.acertos : [],
+    nome: typeof d.nome === 'string' ? d.nome : '',
     updatedAt: d.updatedAt || 0
   };
 }
@@ -413,6 +434,9 @@ function commit() {
 
 /* ---------- Telas ---------- */
 function render() {
+  const titulo = db.nome || (PERFIL ? nomePerfil(PERFIL) : 'Controle Financeiro');
+  $('#titulo').textContent = titulo;
+  document.title = titulo;
   $('#mes').textContent = monthName(cur);
   const cad = tab === 'cad';
   $('#monthBar').hidden = cad;
@@ -457,6 +481,10 @@ function barras(obj, total, cor) {
 function viewDash() {
   const items = monthItems(cur);
   let h = '';
+  if (!db.items.length) h += `<div class="sec"><h3>Bem-vinda(o)!</h3>
+    <p class="hint" style="margin-top:0">Comece cadastrando cartões e pessoas na aba <b>Cadastros</b> e depois toque em <b>＋ Lançar</b>.</p>
+    <p class="hint">Recebeu um arquivo com lançamentos de outra pessoa?</p>
+    <div class="row"><button class="primary" data-act="importar" style="flex:1;padding:12px;border-radius:12px;border:0;font-weight:600">Importar arquivo</button></div></div>`;
 
   // Contas do mês (checklist): despesas avulsas + uma linha por fatura de cartão
   const contas = [];
@@ -886,6 +914,7 @@ $('#pList').addEventListener('click', e => {
 const acoes = {
   editar: b => openForm(b.dataset.id),
   copiar: copiarFixos,
+  importar: () => $('#bImp').click(),
   mes: b => { cur = b.dataset.id; tab = 'lanc'; render(); window.scrollTo(0, 0); },
   pessoa: b => abrirPessoa(b.dataset.id),
   excluir: b => excluirItem(db.items.find(x => x.id === b.dataset.id)),
@@ -964,19 +993,58 @@ $$('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.tab; cartaoE
 $$('[data-close]').forEach(b => b.onclick = () => b.closest('dialog').close());
 
 /* ---------- Configurações ---------- */
+function renderPerfis() {
+  const ps = [''];
+  try {
+    for (let k = 0; k < localStorage.length; k++) {
+      const m = localStorage.key(k).match(/^financeiro\.v1\.(.+)$/);
+      if (m) ps.push(m[1]);
+    }
+  } catch (e) {}
+  if (PERFIL && !ps.includes(PERFIL)) ps.push(PERFIL);
+  $('#perfis').innerHTML = ps.map(p => `<div class="crow"><a class="grow lnk" href="${esc(linkPerfil(p))}" style="color:inherit;text-decoration:none">${esc(p ? nomePerfil(p) : 'Meu controle (principal)')}</a>
+    ${p === PERFIL ? '<span class="pill ok">aberto</span>' : '<span class="muted">abrir ›</span>'}</div>`).join('');
+}
+
 $('#openCfg').onclick = () => {
+  $('#cNomeCtl').value = db.nome || (PERFIL ? nomePerfil(PERFIL) : '');
+  $('#shLink').value = linkPerfil(PERFIL);
+  renderPerfis();
   $('#cToken').value = cfg.token || '';
   $('#cGist').value = cfg.gist || '';
   $('#cStatus').textContent = cfg.gist ? `Conectado. Use este ID do Gist nos outros aparelhos: ${cfg.gist}` : '';
   $('#cfgDlg').showModal();
 };
 
-$('#bExp').onclick = () => {
+const nomeArquivo = () => `financeiro-${PERFIL || slug(db.nome) || 'backup'}-${today()}.json`;
+function baixar() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(db, null, 1)], { type: 'application/json' }));
-  a.download = `financeiro-${today()}.json`;
+  a.download = nomeArquivo();
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$('#bExp').onclick = baixar;
+
+$('#shFile').onclick = async () => {
+  const file = new File([JSON.stringify(db)], nomeArquivo(), { type: 'application/json' });
+  const texto = `${$('#titulo').textContent}: abra ${linkPerfil(PERFIL)} , toque em "Importar arquivo" e escolha este arquivo.`;
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], text: texto, title: $('#titulo').textContent }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  baixar();
+  toast('Arquivo baixado. Envie para a pessoa junto com o link.');
+};
+$('#shCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('#shLink').value); toast('Link copiado'); }
+  catch (e) { $('#shLink').select(); toast('Selecione e copie o link'); }
+};
+$('#cNomeSave').onclick = () => { db.nome = $('#cNomeCtl').value.trim(); commit(); toast('Nome salvo'); };
+$('#cPerfil').onclick = () => {
+  const p = slug($('#nPerfil').value);
+  if (!p) { $('#nPerfil').focus(); return; }
+  location.href = linkPerfil(p);
 };
 
 $('#bImp').onchange = e => {
